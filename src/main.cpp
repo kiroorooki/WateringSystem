@@ -1,42 +1,64 @@
 #include <Arduino.h>
+#include <avr/sleep.h>
 
 //Pump pins
-const int APUMP_PIN = 5;
+const int APUMP_PIN = 2;
 const int BPUMP_PIN = 3;
 const int CPUMP_PIN = 4;
 const int DPUMP_PIN = 5;
 
 //Sensor pins, to pair with pump pins
-#define AMOISTURE_SENSOR_PIN 34
-#define BMOISTURE_SENSOR_PIN 35
-#define CMOISTURE_SENSOR_PIN 36
-#define DMOISTURE_SENSOR_PIN 39
+#define AMOISTURE_SENSOR_PIN A0 // No color
+#define BMOISTURE_SENSOR_PIN A1 // Black
+#define CMOISTURE_SENSOR_PIN A2 // Red
+#define DMOISTURE_SENSOR_PIN A3 // Blue
 
-const int MSENSORS_NUMBER = 1;
+const int MSENSORS_NUMBER = 4;
 const int MSENSORS_READ_NUMBER = 100;
-const int MSENSOR_MAX_VALUE = 600;
-const int MSENSOR_MIN_VALUE = 400;
-const float MSENSOR_DRY_PERCENT = .6;
-const float MSENSOR_DRY_VALUE = MSENSOR_MIN_VALUE + (MSENSOR_MAX_VALUE - MSENSOR_MIN_VALUE)*.6;
-const float MSENSOR_TIME_BETWEEN_READ_MS = 600000; //3600000;1h
+const int MSENSORS_READ_ROUND_NUMBER = 100;
+const int MSENSOR_MAX_VALUE = 620; // Dry
+const int MSENSOR_MIN_VALUE = 360; //Wet
+const float MSENSOR_DRY_PERCENT = .30;
+//const float MSENSOR_DRY_VALUE = MSENSOR_MAX_VALUE - ((MSENSOR_MAX_VALUE - MSENSOR_MIN_VALUE)* MSENSOR_DRY_PERCENT);
+const float MSENSOR_TIME_BETWEEN_READ_MS = 14400000; //4 hours //43200000 12 hours; //324000; //-> 11 readings per hour //3600000;//1h
+const int MSENSORS_TIME_READ_STABILIZE = 30000;
 
-const int PUMP_NUMBER = 1;
+const int PUMP_NUMBER = 4;
 const float PUMP_BANDWITH_IN_MLSEC = 21.7;
 const float PUMP_TIME_INMS_FOR_1ML = 46.08;
 const float PUMP_MAX_VOLUME_ONE_GO_IN_ML = 150;
 const float PUMP_TIME_BETWEEN_POURS_MS = 60000;
 
 //Volume of water to pour per plant 
-const int BASIL_WATER_VOLUME_ML = 250;
-const int PEPPER_WATER_VOLUME_ML = 150;
-const int PERSIL_WATER_VOLUME_ML = 250;
-const int CIBOUL_WATER_VOLUME_ML = 200;
-const int LEMON_WATER_VOLUME_ML = 300;
-const int MINT_WATER_VOLUME_ML = 400;
+const int DECO_WATER_VOLUME_ML = 200;   //
+const int BASIL_WATER_VOLUME_ML = 450;  //
+const int MINT_WATER_VOLUME_ML = 450;   //
+const int CIBOUL_WATER_VOLUME_ML = 300; //
+
+//Not used, saved for later
+// const int PEPPER_WATER_VOLUME_ML = 150;
+// const int PERSIL_WATER_VOLUME_ML = 200;
+// const int LEMON_WATER_VOLUME_ML = 300;
+
+const int NB_PLANT_PER_PUMP[] = {2, 6, 4, 2};
+
+//sensor values
+const int sensorsDryValues[] = {530,515,525,600};
+const int sensorsMaxWetValues[] = {400,335,375,364};
 
 enum pumpName {A, B, C, D};
 bool pumps[] = {false, false, false, false};
 float sensorsValues[] = {0,0,0,0};
+
+int sensorValuesLog[100][MSENSORS_NUMBER];
+int logIndex = 0;
+bool firstIteration = true;
+
+float getSensorDryValue(int sensor)
+{
+  float value = sensorsDryValues[sensor] - ((sensorsDryValues[sensor] - sensorsMaxWetValues[sensor])* (1 - MSENSOR_DRY_PERCENT));
+  return value;
+}
 
 void resetBuffer(int *buf)
 {
@@ -93,7 +115,7 @@ float getMoistureSensorValue(pumpName pump)
 //Always 1ms between reads
 void readMoistureSensors(float *buf, int numberOfReads)
 {
-  Serial.print("Read sensors \n");
+  Serial.print("Start reading 1 sensor \n");
   for (int i = 0; i < numberOfReads; i++) 
   { 
     for(int j = 0; j < MSENSORS_NUMBER; j++)
@@ -149,7 +171,7 @@ void setPump(pumpName pump, bool active, bool force = false)
 {
   if(pumps[pump] == active && !force) return;
   pumps[pump] = active;
-  digitalWrite(2, active ? LOW : HIGH);
+  digitalWrite(getPumpPin(pump), active ? LOW : HIGH);
   Serial.print("Set pump: ");
   Serial.print(pump);
   Serial.print("to");
@@ -157,17 +179,22 @@ void setPump(pumpName pump, bool active, bool force = false)
   Serial.print("\n");
 }
 
-void resetPumps()
+void setAllPumps(bool active)
 {
   for (int i = 0; i < PUMP_NUMBER; i++)
   {
-    setPump(pumpName(i), false, true);
+    setPump(pumpName(i), active, true);
   }
+}
+
+void resetPumps()
+{
+  setAllPumps(false);
 }
 
 bool shouldPourWater(pumpName pump)
 {
-  return sensorsValues[pump] > MSENSOR_DRY_VALUE;
+  return sensorsValues[pump] >= getSensorDryValue(pump);
 }
 
 void pourSomeWater(float mililiters, pumpName pump)
@@ -175,7 +202,7 @@ void pourSomeWater(float mililiters, pumpName pump)
   if (shouldPourWater(pump))
   {
     Serial.print("Dividing load! \n");
-    if(mililiters > PUMP_MAX_VOLUME_ONE_GO_IN_ML)
+    if(mililiters > (PUMP_MAX_VOLUME_ONE_GO_IN_ML * NB_PLANT_PER_PUMP[pump]))
     {
       mililiters *= .5;
       pourSomeWater(mililiters, pump);
@@ -192,34 +219,146 @@ void pourSomeWater(float mililiters, pumpName pump)
       setPump(pump, false);
     }
   }
+  else 
+  {
+    Serial.print("No need water for pump:");
+    Serial.print(pump);
+    Serial.print("\n");
+  }
 }
 
 //Todo assign plant to 
 void waterPlants()
 {
-  pourSomeWater(BASIL_WATER_VOLUME_ML, A);
-  pourSomeWater(PEPPER_WATER_VOLUME_ML, B);
-  pourSomeWater(MINT_WATER_VOLUME_ML, C);
-  pourSomeWater(CIBOUL_WATER_VOLUME_ML, D);
+  pourSomeWater(DECO_WATER_VOLUME_ML * NB_PLANT_PER_PUMP[A], A);
+  pourSomeWater(BASIL_WATER_VOLUME_ML * NB_PLANT_PER_PUMP[B], B);
+  pourSomeWater(MINT_WATER_VOLUME_ML * NB_PLANT_PER_PUMP[C], C);
+  pourSomeWater(CIBOUL_WATER_VOLUME_ML * NB_PLANT_PER_PUMP[D], D);
+}
+
+void setPins()
+{
+  pinMode(APUMP_PIN, OUTPUT);
+  pinMode(BPUMP_PIN, OUTPUT);
+  pinMode(CPUMP_PIN, OUTPUT);
+  pinMode(DPUMP_PIN, OUTPUT);
+}
+
+void printAllDrynessValue()
+{
+  for (int i = 0; i < MSENSORS_NUMBER; i++)
+  {
+    Serial.print("Dryness level if value of sensor ");
+    Serial.print(i);
+    Serial.print(" > ");
+    Serial.print(getSensorDryValue(i));
+    Serial.print(" - Range: ");
+    Serial.print(sensorsMaxWetValues[i]);
+    Serial.print("-");
+    Serial.print(sensorsDryValues[i]);
+    Serial.print("\n");
+  }
+}
+
+void DebugSensors(float *buf)
+{
+  Serial.print("Debug sensors \n");
+  for (int i = 0; i < MSENSORS_NUMBER; i++)
+  {
+    float sensorDryValue = getSensorDryValue(i);
+    Serial.print("Read sensor ");
+    Serial.print(i);
+    Serial.print(":");
+    Serial.print(buf[i]);
+    Serial.print(" / ");
+    Serial.print(sensorDryValue);
+    Serial.print(" Dryness: ");
+    float dryness = (buf[i] - sensorsMaxWetValues[i]) / (sensorsDryValues[i] - sensorsMaxWetValues[i]);
+    Serial.print(dryness);
+    Serial.print("\n");
+  }
+}
+
+void logValues()
+{
+  for (int i = 0; i < MSENSORS_NUMBER; i++)
+  {
+    sensorValuesLog[logIndex][i] = sensorsValues[i];
+  }
+  logIndex ++;
+}
+
+void showLoggedValues()
+{
+  Serial.print("Logged values \n");
+  for (int i = 0; i < logIndex; i++)
+  {
+    for (int j = 0; j < MSENSORS_NUMBER; j++)
+    {
+      Serial.print(sensorValuesLog[i][j]);
+      Serial.print("  ");
+    }
+    Serial.print("\n");
+  }
+  Serial.print("End logged values \n");
+}
+
+void readMoistureSensorsWithDelay(float *buf, int numberOfReads)
+{
+  float tempSensorsValues[] = {0,0,0,0};
+  float valuesBuffer[] = {0,0,0,0};
+  //Serial.print("Start reading sensors \n");
+  for (int i = 0; i < numberOfReads; i++)
+  {
+    readMoistureSensors(tempSensorsValues, MSENSORS_READ_NUMBER);
+    for (int j = 0; j < MSENSORS_NUMBER; j++)
+    {
+      valuesBuffer[j] += tempSensorsValues[j];
+    }
+    //DebugSensors(tempSensorsValues);
+    resetBuffer(tempSensorsValues);
+    if(i < numberOfReads - 1) delay(MSENSORS_TIME_READ_STABILIZE);
+  }
+  for (int i = 0; i < MSENSORS_NUMBER; i++)
+  {
+    buf[i] = valuesBuffer[i] / numberOfReads;
+  }
+}
+
+void printAllSensors()
+{
+   Serial.print(analogRead(AMOISTURE_SENSOR_PIN));
+   Serial.print(" ");
+   Serial.print(analogRead(BMOISTURE_SENSOR_PIN));
+   Serial.print(" ");
+   Serial.print(analogRead(CMOISTURE_SENSOR_PIN));
+   Serial.print(" ");
+   Serial.print(analogRead(DMOISTURE_SENSOR_PIN));
+   Serial.print("\n");
 }
 
 void setup() {
   Serial.begin(9600);
-  Serial.print("Setup Start \n");
+  setPins();
   resetPumps();
-  pinMode(2, OUTPUT);
-  pinMode(3, OUTPUT);
-  pinMode(4, OUTPUT);
-  pinMode(5, OUTPUT);
-  digitalWrite(2, LOW);
-  digitalWrite(3, LOW);
-  digitalWrite(4, LOW);
-  digitalWrite(5, LOW);
+  printAllDrynessValue();
 }
 
 void loop() {
+  //Serial.print("__Start loop__ \n");
+  printAllSensors();
   resetBuffer(sensorsValues);
-  readMoistureSensors(sensorsValues, MSENSORS_READ_NUMBER);
+  if(firstIteration) 
+  {
+    readMoistureSensorsWithDelay(sensorsValues, 1);
+    firstIteration = false;
+  }
+  else readMoistureSensorsWithDelay(sensorsValues, 10);
+  // DebugSensors(sensorsValues);
+  // logValues();
+  // showLoggedValues();
   waterPlants();
+  //Serial.print("__Start break__ \n");
   delay(MSENSOR_TIME_BETWEEN_READ_MS);
+  //Serial.print("__End break__ \n");
 }
