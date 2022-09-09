@@ -115,7 +115,6 @@ float getMoistureSensorValue(pumpName pump)
 //Always 1ms between reads
 void readMoistureSensors(float *buf, int numberOfReads)
 {
-  Serial.print("Start reading 1 sensor \n");
   for (int i = 0; i < numberOfReads; i++) 
   { 
     for(int j = 0; j < MSENSORS_NUMBER; j++)
@@ -172,11 +171,6 @@ void setPump(pumpName pump, bool active, bool force = false)
   if(pumps[pump] == active && !force) return;
   pumps[pump] = active;
   digitalWrite(getPumpPin(pump), active ? LOW : HIGH);
-  Serial.print("Set pump: ");
-  Serial.print(pump);
-  Serial.print("to");
-  Serial.print(active);
-  Serial.print("\n");
 }
 
 void setAllPumps(bool active)
@@ -201,7 +195,6 @@ void pourSomeWater(float mililiters, pumpName pump)
 {
   if (shouldPourWater(pump))
   {
-    Serial.print("Dividing load! \n");
     if(mililiters > (PUMP_MAX_VOLUME_ONE_GO_IN_ML * NB_PLANT_PER_PUMP[pump]))
     {
       mililiters *= .5;
@@ -211,19 +204,10 @@ void pourSomeWater(float mililiters, pumpName pump)
     }
     else
     {
-      Serial.print("Watering plant for:  \n");
-      Serial.print(mililiters);
-      Serial.print("ml \n");
       setPump(pump, true);
       delay(getDurationFromMililiter(mililiters));
       setPump(pump, false);
     }
-  }
-  else 
-  {
-    Serial.print("No need water for pump:");
-    Serial.print(pump);
-    Serial.print("\n");
   }
 }
 
@@ -307,7 +291,7 @@ void readMoistureSensorsWithDelay(float *buf, int numberOfReads)
 {
   float tempSensorsValues[] = {0,0,0,0};
   float valuesBuffer[] = {0,0,0,0};
-  //Serial.print("Start reading sensors \n");
+
   for (int i = 0; i < numberOfReads; i++)
   {
     readMoistureSensors(tempSensorsValues, MSENSORS_READ_NUMBER);
@@ -315,7 +299,6 @@ void readMoistureSensorsWithDelay(float *buf, int numberOfReads)
     {
       valuesBuffer[j] += tempSensorsValues[j];
     }
-    //DebugSensors(tempSensorsValues);
     resetBuffer(tempSensorsValues);
     if(i < numberOfReads - 1) delay(MSENSORS_TIME_READ_STABILIZE);
   }
